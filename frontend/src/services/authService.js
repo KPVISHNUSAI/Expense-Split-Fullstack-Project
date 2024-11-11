@@ -1,22 +1,29 @@
-// src/services/authService.js
-
 import api from './api';
 
 const authService = {
     login: async (credentials) => {
         const response = await api.post('/auth/login', credentials);
-        if (response.data.data.token) {
-            localStorage.setItem('token', response.data.data.token);
+        console.log("Response from login:", response);  // Log the entire response to inspect its structure
+        const { token, user } = response.data;
+    
+        if (token) {
+            localStorage.setItem('token', token);
         }
-        return response.data;
+    
+        return { token, user };
     },
+    
+    
 
     register: async (userData) => {
         const response = await api.post('/auth/register', userData);
-        if (response.data.data.token) {
-            localStorage.setItem('token', response.data.data.token);
+        const { token, user } = response.data;
+        
+        if (token) {
+            localStorage.setItem('token', token);
         }
-        return response.data;
+        
+        return { token, user };
     },
 
     logout: () => {

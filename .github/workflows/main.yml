@@ -1,0 +1,215 @@
+name: Expense Split App CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_FRONTEND: expense-split-frontend
+  ECR_REPOSITORY_BACKEND: expense-split-backend
+  ECS_CLUSTER: expense-split-cluster
+  ECS_SERVICE_FRONTEND: frontend-service
+  ECS_SERVICE_BACKEND: backend-service
+
+jobs:
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # SonarCloud Scan
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # Frontend dependency audit
+      - name: Frontend NPM Audit
+        working-directory: ./frontend
+        run: |
+          npm install
+          npm audit
+
+      # Backend security scan
+      - name: Go Security Check
+        uses: securego/gosec@master
+        with:
+          args: './backend/...'
+
+  test-frontend:
+    name: Test Frontend
+    needs: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run Tests
+        working-directory: ./frontend
+        run: npm test -- --coverage
+
+      - name: Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        with:
+          flags: frontend
+          directory: ./frontend/coverage
+
+  test-backend:
+    name: Test Backend
+    needs: security-scan
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:12
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: expense_split_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Install Dependencies
+        working-directory: ./backend
+        run: go mod download
+
+      - name: Run Tests
+        working-directory: ./backend
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        with:
+          flags: backend
+          file: ./backend/coverage.out
+
+  build-and-push:
+    name: Build and Push Docker Images
+    needs: [test-frontend, test-backend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # Build and push frontend image
+      - name: Build Frontend Image
+        working-directory: ./frontend
+        run: |
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:${{ github.sha }} .
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:${{ github.sha }}
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:${{ github.sha }} ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:latest
+            docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:latest
+          fi
+
+      # Build and push backend image
+      - name: Build Backend Image
+        working-directory: ./backend
+        run: |
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }} .
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }}
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }} ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:latest
+            docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:latest
+          fi
+
+  deploy:
+    name: Deploy to ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS services
+        run: |
+          # Update frontend service
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE_FRONTEND }} \
+            --force-new-deployment
+
+          # Update backend service
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE_BACKEND }} \
+            --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE_FRONTEND }} ${{ env.ECS_SERVICE_BACKEND }}
+
+  notify:
+    name: Notify Deployment Status
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify Success
+        if: ${{ needs.deploy.result == 'success' }}
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          channel-id: 'deployments'
+          slack-message: '🚀 Successfully deployed expense-split-app to production!'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Notify Failure
+        if: ${{ needs.deploy.result == 'failure' }}
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          channel-id: 'deployments'
+          slack-message: '❌ Failed to deploy expense-split-app to production!'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

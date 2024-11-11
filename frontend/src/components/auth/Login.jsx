@@ -24,19 +24,21 @@ const Login = () => {
     const { loading, error } = useSelector((state) => state.auth);
 
     const handleSubmit = async (values, { setSubmitting }) => {
-        try {
-            dispatch(loginStart());
-            const response = await authService.login(values);
-            dispatch(loginSuccess(response.data));
-            toast.success('Login successful!');
-            navigate('/');
-        } catch (error) {
-            dispatch(loginFailure(error.response?.data?.error || 'Login failed'));
-            toast.error(error.response?.data?.error || 'Login failed');
-        } finally {
-            setSubmitting(false);
-        }
-    };
+      try {
+          dispatch(loginStart());
+          const response = await authService.login(values); // response is { token, user }
+          dispatch(loginSuccess(response)); // directly pass { token, user } to loginSuccess
+          toast.success('Login successful!');
+          navigate('/');
+      } catch (error) {
+          const errorMessage = error.response?.data?.error || 'Login failed';
+          dispatch(loginFailure(errorMessage));
+          toast.error(errorMessage);
+      } finally {
+          setSubmitting(false);
+      }
+  };
+  
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">

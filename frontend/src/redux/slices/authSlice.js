@@ -22,7 +22,7 @@ const authSlice = createSlice({
             state.user = action.payload.user;
             state.token = action.payload.token;
             localStorage.setItem('token', action.payload.token);
-        },
+        },               
         loginFailure: (state, action) => {
             state.loading = false;
             state.error = action.payload;

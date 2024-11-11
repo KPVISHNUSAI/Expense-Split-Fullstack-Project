@@ -91,3 +91,18 @@ bin/
 # Go workspace
 go.work
 go.work.sum
+
+# Terraform
+.terraform/            # Terraform working directory
+*.tfstate              # Terraform state files
+*.tfstate.*            # Backup Terraform state files
+.crash                 # Crash log files
+*.tfvars               # Files containing sensitive variables
+override.tf            # Override config files
+override.tf.json       # Override config files
+*_override.tf          # Override config files
+*_override.tf.json     # Override config files
+.terraform.lock.hcl    # Dependency lock file
+
+# If you use a different backend for state files, include it here
+*.backup               # Backup files

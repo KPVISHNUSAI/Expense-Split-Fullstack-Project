@@ -1,0 +1,42 @@
+name: Infrastructure CI/CD
+
+on:
+  push:
+    paths:
+      - 'infrastructure/**'
+    branches: [ main ]
+  pull_request:
+    paths:
+      - 'infrastructure/**'
+    branches: [ main ]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        
+      - name: Terraform Init
+        run: |
+          cd infrastructure/terraform/environments/prod
+          terraform init
+          
+      - name: Terraform Plan
+        run: |
+          cd infrastructure/terraform/environments/prod
+          terraform plan
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd infrastructure/terraform/environments/prod
+          terraform apply -auto-approve
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

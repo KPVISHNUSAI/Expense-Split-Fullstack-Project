@@ -77,7 +77,7 @@ cp .env.example .env
 
 Example `.env` configuration:
 ```env
-SERVER_PORT=8080
+SERVER_PORT=9000
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres

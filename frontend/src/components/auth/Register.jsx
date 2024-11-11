@@ -5,7 +5,7 @@ import { useDispatch } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { Formik, Form, Field } from 'formik';
 import * as Yup from 'yup';
-import authService from '../../services/authService';
+import authService  from '../../services/authService';
 import { loginSuccess } from '../../redux/slices/authSlice';
 import { toast } from 'react-toastify';
 
